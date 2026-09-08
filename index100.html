@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>KSK Admin Dashboard</title>
+<style>
+  html,body{margin:0;padding:0;background:#f4f5f7;color:#111;font-family:Arial,Helvetica,sans-serif;}
+  .wrap{max-width:1300px;margin:0 auto;padding:24px;}
+  h1{font-size:20px;margin:0 0 2px;}
+  .sub{font-size:12px;color:#666;margin:0 0 20px;}
+  .stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
+  .stat{background:#fff;border:1px solid #ddd;border-radius:6px;padding:14px 18px;min-width:130px;}
+  .stat .num{font-size:22px;font-weight:bold;}
+  .stat .lbl{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.03em;}
+  .panel{background:#fff;border:1px solid #ddd;border-radius:6px;padding:18px;margin-bottom:20px;}
+  .panel h2{font-size:15px;margin:0 0 12px;}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center;}
+  .toolbar input, .toolbar select{padding:7px 9px;border:1px solid #bbb;border-radius:4px;font-size:13px;}
+  .toolbar input[type=text]{min-width:200px;}
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eee;white-space:nowrap;}
+  th{font-size:11px;text-transform:uppercase;color:#666;letter-spacing:.02em;}
+  tr:hover{background:#fafafa;}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:bold;}
+  .badge.late{background:#fdeaea;color:#b00020;}
+  .badge.ontime{background:#e9f8ea;color:#0a7a0a;}
+  .badge.invalid{background:#fff3e0;color:#9a6a00;}
+  .reason-box{background:#fff8f8;border-left:3px solid #b00020;padding:4px 8px;font-size:11px;color:#b00020;max-width:250px;white-space:normal;word-break:break-word;}
+  .btn{padding:7px 14px;border:1px solid #222;background:#fff;border-radius:4px;font-size:12px;cursor:pointer;font-weight:bold;}
+  .btn:hover{background:#222;color:#fff;}
+  .btn.danger{border-color:#b00020;color:#b00020;}
+  .btn.danger:hover{background:#b00020;color:#fff;}
+  .msg{font-size:12px;margin:8px 0;padding:8px 10px;border-radius:4px;}
+  .msg.err{background:#fdeaea;color:#b00020;}
+  .msg.ok{background:#e9f8ea;color:#0a7a0a;}
+  .empty{color:#888;font-size:13px;padding:20px;text-align:center;}
+  .loading{color:#888;font-size:13px;padding:20px;text-align:center;}
+  .cleanup-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .cleanup-note{font-size:11px;color:#666;margin-top:8px;}
+  code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:11px;}
+  .db-size-hint{font-size:11px;color:#9a6a00;background:#fff3e0;padding:8px 10px;border-radius:4px;margin-bottom:10px;}
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>KSK Admin Dashboard</h1>
+  <p class="sub">Attendance auditing, user details, and late reasons tracking.</p>
+
+  <div class="stats" id="statsRow">
+    <div class="stat"><div class="num" id="statTotalRows">–</div><div class="lbl">Total attendance rows</div></div>
+    <div class="stat"><div class="num" id="statTodayCheckins">–</div><div class="lbl">Checked in today</div></div>
+    <div class="stat"><div class="num" id="statTodayLate">–</div><div class="lbl">Late today</div></div>
+    <div class="stat"><div class="num" id="statOldRows">–</div><div class="lbl">Older than 60 days</div></div>
+  </div>
+
+  <!-- ============ STORAGE CLEANUP ============ -->
+  <div class="panel">
+    <h2>Storage Cleanup (Free Tier 500 MB Cap)</h2>
+    <div class="db-size-hint">Supabase's free tier caps total project storage at 500 MB. Attendance rows accumulate daily — use this to delete old records you no longer need for audits.</div>
+    <div class="cleanup-row">
+      <label style="font-size:12px;font-weight:bold;">Delete attendance records older than</label>
+      <select id="cleanupDays">
+        <option value="30">30 days</option>
+        <option value="60" selected>60 days</option>
+        <option value="90">90 days</option>
+        <option value="180">180 days</option>
+      </select>
+      <button class="btn danger" id="cleanupBtn">Delete Old Records</button>
+    </div>
+    <p class="cleanup-note">This permanently deletes rows from <code>ksk_attendance</code> where <code>checked_in_at</code> is older than the selected window. Employee records in <code>ksk_employees</code> are never touched. This cannot be undone — export/back up first if you need the data.</p>
+    <p class="msg hidden" id="cleanupMsg"></p>
+  </div>
+
+  <!-- ============ ATTENDANCE LOG ============ -->
+  <div class="panel">
+    <h2>Attendance Log</h2>
+    <div class="toolbar">
+      <select id="attDateFilter">
+        <option value="today">Today</option>
+        <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="all">All time</option>
+      </select>
+      <select id="attStatusFilter">
+        <option value="all">All statuses</option>
+        <option value="late">Late only (Show Reasons)</option>
+        <option value="ontime">On time only</option>
+        <option value="invalid">No expected time</option>
+      </select>
+      <input type="text" id="attSearch" placeholder="Search code, name, email, phone, model..." />
+      <button class="btn" id="attRefreshBtn">Refresh</button>
+    </div>
+    <p class="msg hidden" id="attMsg"></p>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Emp Code</th><th>Name</th><th>Email</th><th>Mobile Number</th><th>Mobile Model</th><th>Checked In At</th><th>Status</th><th>Late Reason</th><th>Device ID</th>
+          </tr>
+        </thead>
+        <tbody id="attTbody"></tbody>
+      </table>
+      <div id="attEmpty" class="empty hidden">No attendance records found.</div>
+      <div id="attLoading" class="loading">Loading attendance...</div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+  const SUPABASE_URL = "https://iumuymbmtkuvkwiuadkj.supabase.co";
+  const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1bXV5bWJtdGt1dmt3aXVhZGtqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMDc4NDAsImV4cCI6MjEwMjg4Mzg0MH0.OJSi3at_0jaAq5pVePesqgdE6DlLwobxCyI0SP_TsKQ";
+  const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let allAttendance = [];
+
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  function showMsg(el, text, ok) {
+    el.textContent = text;
+    el.className = 'msg ' + (ok ? 'ok' : 'err');
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 5000);
+  }
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  /* ---------------- STATS ---------------- */
+  async function loadStats() {
+    const { count: totalCount } = await db.from('ksk_attendance').select('*', { count: 'exact', head: true });
+    document.getElementById('statTotalRows').innerText = totalCount ?? '–';
+
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const { data: todayRows } = await db.from('ksk_attendance').select('is_late').gte('checked_in_at', todayStart.toISOString());
+    if (todayRows) {
+      document.getElementById('statTodayCheckins').innerText = todayRows.length;
+      document.getElementById('statTodayLate').innerText = todayRows.filter(r => r.is_late).length;
+    }
+
+    const cutoff60 = new Date(Date.now() - 60*24*60*60*1000);
+    const { count: oldCount } = await db.from('ksk_attendance').select('*', { count: 'exact', head: true }).lt('checked_in_at', cutoff60.toISOString());
+    document.getElementById('statOldRows').innerText = oldCount ?? '–';
+  }
+
+  /* ---------------- ATTENDANCE LOG ---------------- */
+  const attTbody = document.getElementById('attTbody');
+  const attLoading = document.getElementById('attLoading');
+  const attEmpty = document.getElementById('attEmpty');
+  const attMsg = document.getElementById('attMsg');
+  const attDateFilter = document.getElementById('attDateFilter');
+  const attStatusFilter = document.getElementById('attStatusFilter');
+  const attSearch = document.getElementById('attSearch');
+
+  async function loadAttendance() {
+    attLoading.classList.remove('hidden');
+    attEmpty.classList.add('hidden');
+    attTbody.innerHTML = '';
+
+    // Explicitly select all columns ensuring fallback field mapping
+    const { data, error } = await db.from('ksk_attendance')
+      .select('emp_code, name, email, mobile_number, mobile_model, checked_in_at, is_late, late_reason, invalid_timing, device_id')
+      .order('checked_in_at', { ascending: false })
+      .limit(1000);
+
+    attLoading.classList.add('hidden');
+
+    if (error) {
+      showMsg(attMsg, 'Failed to load attendance: ' + error.message, false);
+      return;
+    }
+
+    allAttendance = data || [];
+    renderAttendance();
+  }
+
+  function renderAttendance() {
+    const dateMode = attDateFilter.value;
+    const statusMode = attStatusFilter.value;
+    const q = attSearch.value.trim().toLowerCase();
+
+    const now = new Date();
+    let cutoff = null;
+    if (dateMode === 'today') { cutoff = new Date(); cutoff.setHours(0,0,0,0); }
+    else if (dateMode === '7d') { cutoff = new Date(now.getTime() - 7*24*60*60*1000); }
+    else if (dateMode === '30d') { cutoff = new Date(now.getTime() - 30*24*60*60*1000); }
+
+    const filtered = allAttendance.filter(r => {
+      if (cutoff && new Date(r.checked_in_at) < cutoff) return false;
+      if (statusMode === 'late' && !r.is_late) return false;
+      if (statusMode === 'ontime' && (r.is_late || r.invalid_timing)) return false;
+      if (statusMode === 'invalid' && !r.invalid_timing) return false;
+      if (q) {
+        const code = (r.emp_code || '').toLowerCase();
+        const name = (r.name || '').toLowerCase();
+        const email = (r.email || '').toLowerCase();
+        const phone = (r.mobile_number || '').toLowerCase();
+        const model = (r.mobile_model || '').toLowerCase();
+        const reason = (r.late_reason || '').toLowerCase();
+        const dev = (r.device_id || '').toLowerCase();
+        if (!code.includes(q) && !name.includes(q) && !email.includes(q) && !phone.includes(q) && !model.includes(q) && !reason.includes(q) && !dev.includes(q)) return false;
+      }
+      return true;
+    });
+
+    attTbody.innerHTML = '';
+    if (filtered.length === 0) {
+      attEmpty.classList.remove('hidden');
+      return;
+    }
+    attEmpty.classList.add('hidden');
+
+    for (const r of filtered) {
+      let badge = '<span class="badge ontime">ON TIME</span>';
+      if (r.invalid_timing) badge = '<span class="badge invalid">NO EXPECTED TIME</span>';
+      else if (r.is_late) badge = '<span class="badge late">LATE</span>';
+
+      let reasonHtml = '—';
+      if (r.late_reason) {
+        reasonHtml = `<div class="reason-box">${escapeHtml(r.late_reason)}</div>`;
+      }
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(r.emp_code)}</strong></td>
+        <td>${escapeHtml(r.name || '—')}</td>
+        <td>${escapeHtml(r.email || '—')}</td>
+        <td>${escapeHtml(r.mobile_number || '—')}</td>
+        <td>${escapeHtml(r.mobile_model || '—')}</td>
+        <td>${fmtDateTime(r.checked_in_at)}</td>
+        <td>${badge}</td>
+        <td>${reasonHtml}</td>
+        <td style="font-family:monospace;font-size:11px;color:#666;">${escapeHtml(r.device_id || '—')}</td>`;
+      attTbody.appendChild(tr);
+    }
+  }
+
+  attDateFilter.addEventListener('change', renderAttendance);
+  attStatusFilter.addEventListener('change', renderAttendance);
+  attSearch.addEventListener('input', renderAttendance);
+  document.getElementById('attRefreshBtn').addEventListener('click', () => { loadAttendance(); loadStats(); });
+
+  /* ---------------- STORAGE CLEANUP ---------------- */
+  const cleanupBtn = document.getElementById('cleanupBtn');
+  const cleanupDays = document.getElementById('cleanupDays');
+  const cleanupMsg = document.getElementById('cleanupMsg');
+
+  cleanupBtn.addEventListener('click', async () => {
+    const days = parseInt(cleanupDays.value, 10);
+    const cutoff = new Date(Date.now() - days*24*60*60*1000);
+
+    const { count: matchCount } = await db.from('ksk_attendance')
+      .select('*', { count: 'exact', head: true })
+      .lt('checked_in_at', cutoff.toISOString());
+
+    if (!matchCount) {
+      showMsg(cleanupMsg, 'No records older than ' + days + ' days found.', true);
+      return;
+    }
+
+    if (!confirm(`Delete ${matchCount} attendance record(s) older than ${days} days? This cannot be undone.`)) return;
+
+    cleanupBtn.disabled = true;
+    cleanupBtn.innerText = 'Deleting...';
+
+    const { error } = await db.from('ksk_attendance')
+      .delete()
+      .lt('checked_in_at', cutoff.toISOString());
+
+    cleanupBtn.disabled = false;
+    cleanupBtn.innerText = 'Delete Old Records';
+
+    if (error) {
+        showMsg(cleanupMsg, 'Cleanup failed: ' + error.message, false);
+        return;
+    }
+
+    showMsg(cleanupMsg, `Deleted ${matchCount} record(s) older than ${days} days.`, true);
+    loadAttendance();
+    loadStats();
+  });
+
+  /* ---------------- INIT ---------------- */
+  loadAttendance();
+  loadStats();
+</script>
+</body>
+</html>
